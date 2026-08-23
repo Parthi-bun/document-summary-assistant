@@ -1,0 +1,18 @@
+[build]
+  command = "npm run build:web"
+  publish = "dist/public"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/api/summarize"
+  to = "/.netlify/functions/summarize"
+  status = 200
+
+# SPA fallback for client-side routes.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
