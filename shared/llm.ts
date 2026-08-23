@@ -65,18 +65,41 @@ export function loadLlmConfig(env: NodeJS.ProcessEnv = process.env): LlmConfig {
 }
 
 /** Sends a chat completion request and returns the assistant's raw text reply. */
+/**
+ * Endpoints that rejected a json_schema response_format, so we stop asking.
+ * Keyed by base URL + model; support differs per model on the same provider.
+ */
+const jsonSchemaUnsupported = new Set<string>();
+
+/** Exported for tests: forget which endpoints rejected json_schema. */
+export function resetJsonSchemaSupport(): void {
+  jsonSchemaUnsupported.clear();
+}
+
+/** True when the provider's complaint is specifically about json_schema support. */
+function isSchemaUnsupportedError(status: number, body: string): boolean {
+  if (status !== 400 && status !== 404 && status !== 422 && status !== 501) return false;
+  return /json_schema|response_format|structured.?output|schema/i.test(body);
+}
+
 export async function chatCompletion(
   config: LlmConfig,
   messages: ChatMessage[],
-  options: { temperature?: number; fetchImpl?: typeof fetch } = {},
+  options: { temperature?: number; fetchImpl?: typeof fetch; responseSchema?: unknown } = {},
 ): Promise<string> {
   const doFetch = options.fetchImpl ?? fetch;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+  const endpointKey = `${config.baseUrl}::${config.model}`;
 
-  let response: Response;
-  try {
-    response = await doFetch(`${config.baseUrl}/chat/completions`, {
+  // Constrain generation to the schema when we have one and the endpoint has
+  // not already told us it cannot. This matters most for small local models,
+  // which produce valid-but-wrong-shaped JSON far more often than large ones.
+  const useSchema = options.responseSchema !== undefined && !jsonSchemaUnsupported.has(endpointKey);
+
+  const send = (withSchema: boolean): Promise<Response> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+
+    return doFetch(`${config.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -86,17 +109,34 @@ export async function chatCompletion(
         model: config.model,
         messages,
         temperature: options.temperature ?? 0.2,
-        response_format: { type: 'json_object' },
+        response_format: withSchema
+          ? {
+              type: 'json_schema',
+              json_schema: { name: 'document_summary', strict: true, schema: options.responseSchema },
+            }
+          : { type: 'json_object' },
       }),
       signal: controller.signal,
-    });
+    }).finally(() => clearTimeout(timer));
+  };
+
+  let response: Response;
+  try {
+    response = await send(useSchema);
+
+    // Downgrade once if this endpoint does not understand json_schema.
+    if (useSchema && !response.ok) {
+      const body = await response.clone().text().catch(() => '');
+      if (isSchemaUnsupportedError(response.status, body)) {
+        jsonSchemaUnsupported.add(endpointKey);
+        response = await send(false);
+      }
+    }
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       throw new LlmRequestError('The model took too long to respond. Try a shorter summary length or a smaller document.');
     }
     throw new LlmRequestError(`Could not reach the AI provider at ${config.baseUrl}.`);
-  } finally {
-    clearTimeout(timer);
   }
 
   if (!response.ok) {
@@ -127,7 +167,15 @@ function describeProviderError(status: number, body: string): string {
     return 'The AI provider does not recognise the configured model. Check LLM_MODEL and LLM_BASE_URL.';
   }
   if (status === 429) {
-    return 'The AI provider is rate limiting or the account is out of quota. Wait a moment and try again.';
+    // A 429 covers two very different situations, and the advice differs:
+    // transient throttling clears on its own, an exhausted quota never does.
+    if (/insufficient_quota|exceeded your current quota|billing/i.test(body)) {
+      return (
+        'The AI provider account has no remaining quota, so waiting will not help. ' +
+        'Add billing credit, or switch to a free provider by setting LLM_BASE_URL and LLM_MODEL (see .env.example).'
+      );
+    }
+    return 'The AI provider is rate limiting this request. Wait a few seconds and try again.';
   }
   if (status >= 500) {
     return 'The AI provider is currently unavailable. Please try again shortly.';

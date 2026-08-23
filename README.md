@@ -3,11 +3,9 @@
 Upload a PDF or a scanned image, and get an AI-generated summary, the document's key points, and concrete
 suggestions for improving the document itself — at your choice of Short, Medium, or Long depth.
 
-![The upload screen](docs/screenshot-upload.png)
+![Summary results for a PDF](docs/screenshot-results.png)
 
-> This is the app's upload screen. No screenshot of generated results is included, because the only summaries
-> produced during development came from a local stub provider used to verify the request plumbing — showing those
-> would misrepresent real model output. Add your own results screenshot here once you have run it with a real key.
+*Real output: a text-based PDF summarized at Medium length by `openai/gpt-oss-120b` via Groq's free tier.*
 
 ---
 
@@ -65,8 +63,11 @@ and converts large vertical gaps into paragraph breaks. It is pure and unit-test
 are first stripped from the text itself, so a document cannot close the fence and escape into the instruction
 context. The system prompt states explicitly that content inside the fence must never be obeyed.
 
-**The AI response is a validated contract, not free text.** The model is asked for
-`{ summary, keyPoints, improvementSuggestions }` with `response_format: json_object`. The reply is brace-matched out
+**The AI response is a validated contract, not free text.** Generation is constrained at the provider with a JSON
+Schema derived from the zod contract (`response_format: json_schema`, `strict: true`), so the two can never drift
+apart. Endpoints that do not support `json_schema` are detected from their error and transparently downgraded to
+`response_format: json_object`, once per endpoint. This matters most for small local models, which emit
+valid-but-wrong-shaped JSON far more often than large hosted ones. The reply is brace-matched out
 of any surrounding prose or code fence, normalized (snake_case keys, stray bullet prefixes, `[{point: "..."}]`
 shapes, single strings in place of arrays), then validated with zod. A malformed reply triggers exactly one repair
 retry; if that also fails the user gets an honest error rather than a broken result.
@@ -130,24 +131,37 @@ npm start          # serves the SPA and the API together on http://localhost:300
 | `LLM_TIMEOUT_MS` | No | `90000` | Provider request timeout. |
 | `PORT` | No | `3001` | Express port. |
 
-**Getting a key.** Create one at <https://platform.openai.com/api-keys> and put it in `.env` as
-`LLM_API_KEY=sk-...`. Because only `/v1/chat/completions` is used, any OpenAI-compatible endpoint works — set
-`LLM_BASE_URL` and `LLM_MODEL` accordingly:
+**Getting a key.** Only `/v1/chat/completions` is used, so any OpenAI-compatible endpoint works. Free options
+exist and need no code change — just these three variables:
 
 ```bash
-# OpenRouter
-LLM_BASE_URL=https://openrouter.ai/api/v1
-LLM_MODEL=openai/gpt-4o-mini
-
-# Groq
+# Groq — free tier, fast, and usable from a cloud deployment.
+# Key: https://console.groq.com/keys
+LLM_API_KEY=gsk_...
 LLM_BASE_URL=https://api.groq.com/openai/v1
-LLM_MODEL=llama-3.3-70b-versatile
+LLM_MODEL=openai/gpt-oss-120b
 
-# Local Ollama (no real key needed, but the variable must be non-empty)
-LLM_BASE_URL=http://localhost:11434/v1
-LLM_MODEL=llama3.1
+# Google Gemini — free tier. Key: https://aistudio.google.com/apikey
+LLM_API_KEY=...
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+LLM_MODEL=gemini-2.0-flash
+
+# OpenAI — paid. Key: https://platform.openai.com/api-keys
+LLM_API_KEY=sk-...
+LLM_MODEL=gpt-4o-mini
+
+# Ollama — free and fully local, but LOCAL DEVELOPMENT ONLY (see below).
 LLM_API_KEY=ollama
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_MODEL=llama3.2
 ```
+
+> **Ollama cannot be used by a deployed app.** `http://localhost:11434` resolves to whichever machine the server
+> process is running on. On Vercel, Netlify, or Render that is their server, not your laptop, so the request fails.
+> Use a hosted provider (free tiers above) for anything you deploy.
+
+Free tiers are rate-limited — the app surfaces HTTP 429 as a clear "try again" message — and some providers may use
+submitted prompts to improve their models, so avoid sending confidential documents through them.
 
 The key is only ever read on the server. It is never bundled into the client and never sent to the browser.
 `GET /api/health` reports `{ "llmConfigured": true | false }` without revealing the key.
@@ -233,19 +247,24 @@ netlify deploy --prod
   reconstructs lines and paragraphs from geometry, but it does not detect table or column structure.
 - **Encrypted or image-only PDFs** with no renderable content cannot be read, and report that explicitly.
 - **Summaries come from an LLM** and can be wrong. The UI says so; verify anything important against the source.
+- **Model availability changes.** Groq's catalogue shifts over time; if `LLM_MODEL` 404s, list what your account can
+  use with `curl https://api.groq.com/openai/v1/models -H "Authorization: Bearer $LLM_API_KEY"` and pick a chat model.
 - **No hosted URL is claimed here.** Deployment is configured and documented but has not been performed.
 
 ---
 
 ## Testing
 
-73 tests across 10 files (`npm test`):
+84 tests across 11 files (`npm test`):
 
 - `shared/parseResult.test.ts` — brace-matched JSON extraction from prose and code fences, escaped quotes, snake_case
   keys, bullet stripping, object-wrapped entries, and rejection of incomplete replies.
 - `shared/prompt.test.ts` — fence sanitization against prompt injection, and length-to-depth mapping.
+- `shared/jsonSchema.test.ts` — strict-mode schema sanitization, and a guard that the JSON Schema stays derived from
+  the zod contract.
 - `shared/summarize.test.ts` — the handler against a stubbed provider: happy path, validation failures, missing key,
-  malformed-output retry, auth failure, rate limiting, unreachable provider, custom base URL.
+  malformed-output retry, auth failure, rate limiting, unreachable provider, custom base URL, json_schema
+  enforcement, and the one-time downgrade for endpoints that reject it.
 - `server/app.test.ts` — the Express routes via supertest, including malformed JSON and JSON 404s.
 - `src/lib/extract/layout.test.ts` — reading-order reconstruction, missing-space insertion, paragraph gaps, superscripts.
 - `src/lib/fileValidation.test.ts`, `src/lib/formatResult.test.ts` — pure helpers, including the empty-MIME-type

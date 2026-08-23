@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { toStrictJsonSchema } from './jsonSchema.js';
 
 /** The three summary depths a user can pick in the UI. */
 export const SUMMARY_LENGTHS = ['short', 'medium', 'long'] as const;
@@ -34,6 +35,12 @@ export const SummaryResultSchema = z.object({
   improvementSuggestions: z.array(z.string().min(1)).min(1),
 });
 export type SummaryResult = z.infer<typeof SummaryResultSchema>;
+
+/**
+ * The contract as a JSON Schema, used to constrain generation at the provider.
+ * Derived from the zod schema above so the two can never drift apart.
+ */
+export const SUMMARY_RESULT_JSON_SCHEMA = toStrictJsonSchema(z.toJSONSchema(SummaryResultSchema));
 
 /** Shape of every non-2xx response from the API. */
 export interface ApiError {

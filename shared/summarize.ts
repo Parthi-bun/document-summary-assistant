@@ -1,4 +1,9 @@
-import { SummarizeRequestSchema, type ApiError, type SummaryResult } from './contract.js';
+import {
+  SUMMARY_RESULT_JSON_SCHEMA,
+  SummarizeRequestSchema,
+  type ApiError,
+  type SummaryResult,
+} from './contract.js';
 import { chatCompletion, loadLlmConfig, LlmNotConfiguredError, LlmRequestError, type ChatMessage } from './llm.js';
 import { parseSummaryResult } from './parseResult.js';
 import { buildUserPrompt, REPAIR_INSTRUCTION, SYSTEM_PROMPT } from './prompt.js';
@@ -48,7 +53,10 @@ export async function handleSummarize(rawBody: unknown, deps: HandlerDeps = {}):
   ];
 
   try {
-    const first = await chatCompletion(config, messages, { fetchImpl: deps.fetchImpl });
+    const first = await chatCompletion(config, messages, {
+      fetchImpl: deps.fetchImpl,
+      responseSchema: SUMMARY_RESULT_JSON_SCHEMA,
+    });
     const result = parseSummaryResult(first);
     if (result) return { status: 200, body: result };
 
@@ -56,7 +64,7 @@ export async function handleSummarize(rawBody: unknown, deps: HandlerDeps = {}):
     const repaired = await chatCompletion(
       config,
       [...messages, { role: 'assistant', content: first }, { role: 'user', content: REPAIR_INSTRUCTION }],
-      { temperature: 0, fetchImpl: deps.fetchImpl },
+      { temperature: 0, fetchImpl: deps.fetchImpl, responseSchema: SUMMARY_RESULT_JSON_SCHEMA },
     );
     const retryResult = parseSummaryResult(repaired);
     if (retryResult) return { status: 200, body: retryResult };
