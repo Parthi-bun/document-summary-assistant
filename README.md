@@ -184,7 +184,7 @@ The key is only ever read on the server. It is never bundled into the client and
 
 ## Deployment
 
-### Option A — one Node service (recommended; this is the path verified locally)
+### Option A — one Node service (verified locally end to end)
 
 Works on Render, Railway, Fly.io, or any Node host. One process serves both the SPA and the API, so there is no
 CORS or routing configuration to get wrong.
@@ -197,7 +197,8 @@ CORS or routing configuration to get wrong.
 ### Option B — Vercel
 
 `vercel.json` and `api/summarize.ts` are included. Vercel builds the SPA and deploys `api/summarize.ts` as a
-serverless function.
+serverless function. The function has been bundled with esbuild (the same bundler Vercel uses) and executed against
+a live provider, returning a valid summary — so the import graph and handler contract are verified.
 
 ```bash
 npm i -g vercel
@@ -278,4 +279,4 @@ netlify deploy --prod
 
 ## Licence
 
-MIT
+MIT — see [LICENSE](LICENSE).
