@@ -3,6 +3,8 @@
 Upload a PDF or a scanned image, and get an AI-generated summary, the document's key points, and concrete
 suggestions for improving the document itself — at your choice of Short, Medium, or Long depth.
 
+**Live demo → https://document-summary-assistant-murex.vercel.app**
+
 ![Summary results for a PDF](docs/screenshot-results.png)
 
 *Real output: a text-based PDF summarized at Medium length by `openai/gpt-oss-120b` via Groq's free tier.*
@@ -194,7 +196,7 @@ CORS or routing configuration to get wrong.
 3. Environment variables: set `LLM_API_KEY` (plus `LLM_BASE_URL` / `LLM_MODEL` if not using OpenAI defaults).
    `PORT` is supplied by the host and is read automatically.
 
-### Option B — Vercel
+### Option B — Vercel (this is how the live demo is deployed)
 
 `vercel.json` and `api/summarize.ts` are included. Vercel builds the SPA and deploys `api/summarize.ts` as a
 serverless function. The function has been bundled with esbuild (the same bundler Vercel uses) and executed against
@@ -224,6 +226,9 @@ netlify deploy --prod
 
 ### After deploying
 
+Environment variables are applied at build time, so after adding them you must **redeploy** — an existing
+deployment will keep returning `503 not_configured` until you do.
+
 1. Open the live URL in an incognito window.
 2. Upload a real text-based PDF and confirm a summary appears.
 3. Upload a real scanned image and confirm OCR runs (the first run downloads ~4 MB, so allow time).
@@ -250,7 +255,8 @@ netlify deploy --prod
 - **Summaries come from an LLM** and can be wrong. The UI says so; verify anything important against the source.
 - **Model availability changes.** Groq's catalogue shifts over time; if `LLM_MODEL` 404s, list what your account can
   use with `curl https://api.groq.com/openai/v1/models -H "Authorization: Bearer $LLM_API_KEY"` and pick a chat model.
-- **No hosted URL is claimed here.** Deployment is configured and documented but has not been performed.
+- **Free-tier rate limits apply** to the hosted demo. A burst of requests can return a "try again" message; the app
+  surfaces that clearly rather than failing silently.
 
 ---
 
